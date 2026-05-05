@@ -461,7 +461,7 @@
     DOM.btnUpload.disabled = false;
   }
 
-  /** XMLHttpRequest ile JSON Pload yükleme (Google Apps Script için) */
+  /** Yükleme Fonksiyonu (Mobil Tarayıcı ve CORS Uyumlu) */
   function uploadWithXHR(file) {
     return new Promise(function (resolve, reject) {
       if (!URL_CONFIG.klasor) {
@@ -470,7 +470,7 @@
       }
 
       var reader = new FileReader();
-      reader.onload = function(e) {
+      reader.onload = async function(e) {
         var base64Data = e.target.result;
 
         var payload = {
@@ -482,46 +482,37 @@
           comment: DOM.guestComment.value.trim()
         };
 
-        var xhr = new XMLHttpRequest();
-        xhr.open('POST', API_BASE, true);
-        xhr.timeout = CONFIG.uploadTimeout;
+        // Sahte progress bar (Fetch api upload progress desteklemediği için)
+        var simulatedProgress = 0;
+        var progressInterval = setInterval(function() {
+          simulatedProgress += 5;
+          if (simulatedProgress > 90) simulatedProgress = 90;
+          updateProgress(simulatedProgress, 'Yükleniyor... Lütfen bekleyin');
+        }, 300);
 
-        // Google Apps Script CORS bypass için Simple Request olması şarttır.
-        // Bu nedenle "text/plain" kullanmak zorundayız, application/json preflight tetikler
-        xhr.setRequestHeader('Content-Type', 'text/plain;charset=utf-8');
+        try {
+          // 'no-cors' modunda fetch, mobil Safari'nin yönlendirmeleri (302) kesmesini engeller
+          await fetch(API_BASE, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: {
+              'Content-Type': 'text/plain;charset=utf-8'
+            },
+            body: JSON.stringify(payload)
+          });
 
-        // Progress olayı 
-        xhr.upload.onprogress = function (e) {
-          if (e.lengthComputable) {
-            var percent = Math.round((e.loaded / e.total) * 100);
-            updateProgress(percent, formatFileSize(e.loaded) + ' / ' + formatFileSize(e.total));
-          }
-        };
+          // no-cors modunda response okunamadığı için hata fırlatmadığı sürece başarılı sayıyoruz
+          clearInterval(progressInterval);
+          updateProgress(100, 'Tamamlandı!');
+          
+          setTimeout(function() {
+            resolve({success: true});
+          }, 500);
 
-        // Başarı
-        xhr.onload = function () {
-          // Google Apps Script 302 Redirect atabileceği için durumu 200..302 kapsıyoruz
-          if (xhr.status >= 200 && xhr.status <= 302) {
-            try {
-              var response = JSON.parse(xhr.responseText);
-              if (response.success) {
-                resolve(response);
-              } else {
-                reject(new Error(response.error || 'Sunucu hatası'));
-              }
-            } catch (err) {
-              // Varsayılan döndür, JSON gelmemişse bile (opaq redirect) başarılı olabilir
-              resolve({success: true});
-            }
-          } else {
-            reject(new Error('Sunucu hatası: ' + xhr.status));
-          }
-        };
-
-        xhr.onerror = function () { reject(new Error('Yükleme hatası: Google Erişim İzni Engeli. Google\'da kodu Deploy/Dağıt yaparken (Who has access) kısmını "Anyone (Herkes)" seçtiğinizden GÜVENLİ bir şekilde emin olun. Aksi halde sistem yüklemeyi durdurur.')); };
-        xhr.ontimeout = function () { reject(new Error('Yükleme zaman aşımına uğradı. Bağlantınız yavaş olabilir.')); };
-
-        xhr.send(JSON.stringify(payload));
+        } catch (error) {
+          clearInterval(progressInterval);
+          reject(new Error('İnternet bağlantınız koptu veya erişim reddedildi.'));
+        }
       };
       
       reader.onerror = function() {
