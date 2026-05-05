@@ -461,7 +461,7 @@
     DOM.btnUpload.disabled = false;
   }
 
-  /** Yükleme Fonksiyonu (Mobil Tarayıcı ve CORS Uyumlu) */
+  /** Yükleme Fonksiyonu (Apple Safari Iframe POST Bypass) */
   function uploadWithXHR(file) {
     return new Promise(function (resolve, reject) {
       if (!URL_CONFIG.klasor) {
@@ -470,7 +470,7 @@
       }
 
       var reader = new FileReader();
-      reader.onload = async function(e) {
+      reader.onload = function(e) {
         var base64Data = e.target.result;
 
         var payload = {
@@ -482,36 +482,55 @@
           comment: DOM.guestComment.value.trim()
         };
 
-        // Sahte progress bar (Fetch api upload progress desteklemediği için)
+        // Sahte progress bar göster
         var simulatedProgress = 0;
         var progressInterval = setInterval(function() {
           simulatedProgress += 5;
-          if (simulatedProgress > 90) simulatedProgress = 90;
-          updateProgress(simulatedProgress, 'Yükleniyor... Lütfen bekleyin');
-        }, 300);
+          if (simulatedProgress > 95) simulatedProgress = 95;
+          updateProgress(simulatedProgress, 'Sisteme işleniyor... (' + simulatedProgress + '%)');
+        }, 400);
 
         try {
-          // 'no-cors' modunda fetch, mobil Safari'nin yönlendirmeleri (302) kesmesini engeller
-          await fetch(API_BASE, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: {
-              'Content-Type': 'text/plain;charset=utf-8'
-            },
-            body: JSON.stringify(payload)
-          });
-
-          // no-cors modunda response okunamadığı için hata fırlatmadığı sürece başarılı sayıyoruz
-          clearInterval(progressInterval);
-          updateProgress(100, 'Tamamlandı!');
+          var iframeName = 'iframe_' + Date.now();
           
-          setTimeout(function() {
-            resolve({success: true});
-          }, 500);
+          var iframe = document.createElement('iframe');
+          iframe.name = iframeName;
+          iframe.style.display = 'none';
+          document.body.appendChild(iframe);
+
+          var form = document.createElement('form');
+          form.method = 'POST';
+          form.action = API_BASE;
+          form.target = iframeName;
+          // Safari'nin en uyumlu olduğu standard form formatı
+          form.enctype = 'application/x-www-form-urlencoded';
+          form.style.display = 'none';
+
+          var input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = 'payload';
+          input.value = JSON.stringify(payload);
+          form.appendChild(input);
+          
+          document.body.appendChild(form);
+
+          // Iframe yüklendiğinde (işlem bittiğinde Google login sayfası veya JSON döndürdüğünde tetiklenir)
+          iframe.onload = function() {
+            clearInterval(progressInterval);
+            updateProgress(100, 'Tamamlandı!');
+            setTimeout(function() {
+              resolve({success: true});
+              // Temizlik
+              document.body.removeChild(form);
+              document.body.removeChild(iframe);
+            }, 500);
+          };
+
+          form.submit();
 
         } catch (error) {
           clearInterval(progressInterval);
-          reject(new Error('İnternet bağlantınız koptu veya erişim reddedildi.'));
+          reject(new Error('Form gönderimi sırasında bir hata oluştu.'));
         }
       };
       

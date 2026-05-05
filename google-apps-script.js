@@ -10,8 +10,12 @@
 
 function doPost(e) {
   try {
-    // Gelen veriyi parse er
-    var data = JSON.parse(e.postData.contents);
+    // Safari Iframe hack için form verisinden okuma veya fetch okuma
+    var payloadStr = (e.parameter && e.parameter.payload) ? e.parameter.payload : (e.postData ? e.postData.contents : null);
+    if (!payloadStr) throw new Error("Veri okunamadı");
+    
+    // Gelen veriyi parse et
+    var data = JSON.parse(payloadStr);
     
     // Gerekli veriler
     var base64Data = data.file;
