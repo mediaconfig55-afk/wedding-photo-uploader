@@ -461,7 +461,7 @@
     DOM.btnUpload.disabled = false;
   }
 
-  /** Yükleme Fonksiyonu — Iframe POST (CORS bypass) + doğrulama */
+  /** Yükleme Fonksiyonu — Fetch (no-cors) + Doğrulama */
   function uploadWithXHR(file) {
     return new Promise(function (resolve, reject) {
       if (!URL_CONFIG.klasor) {
@@ -483,122 +483,61 @@
         };
 
         console.log('[Upload] Payload hazırlandı, boyut:', JSON.stringify(payload).length, 'byte');
-        console.log('[Upload] Folder ID:', URL_CONFIG.klasor);
-        console.log('[Upload] API URL:', API_BASE);
+        console.log('[Upload] Gönderiliyor via no-cors fetch...');
 
         // Progress bar
         var simulatedProgress = 0;
         var progressInterval = setInterval(function() {
           simulatedProgress += 5;
-          if (simulatedProgress > 95) simulatedProgress = 95;
+          if (simulatedProgress > 85) simulatedProgress = 85;
           updateProgress(simulatedProgress, 'Sunucuya gönderiliyor... (' + simulatedProgress + '%)');
         }, 400);
 
-        // Timeout zamanlayıcı
-        var uploadTimeout = setTimeout(function() {
-          clearInterval(progressInterval);
-          // Temizlik
-          try {
-            document.body.removeChild(form);
-            document.body.removeChild(iframe);
-          } catch(e) {}
-          reject(new Error('Yükleme zaman aşımına uğradı (60sn). Lütfen tekrar deneyin.'));
+        var controller = new AbortController();
+        var timeoutId = setTimeout(function() {
+          controller.abort();
         }, CONFIG.uploadTimeout);
 
-        var iframeName = 'upload_frame_' + Date.now();
-        
-        var iframe = document.createElement('iframe');
-        iframe.name = iframeName;
-        iframe.style.display = 'none';
-        document.body.appendChild(iframe);
-
-        var form = document.createElement('form');
-        form.method = 'POST';
-        form.action = API_BASE;
-        form.target = iframeName;
-        form.enctype = 'application/x-www-form-urlencoded';
-        form.style.display = 'none';
-
-        var input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = 'payload';
-        input.value = JSON.stringify(payload);
-        form.appendChild(input);
-        
-        document.body.appendChild(form);
-
-        console.log('[Upload] Form oluşturuldu, gönderiliyor...');
-
-        // Iframe yüklendiğinde
-        iframe.onload = function() {
-          clearTimeout(uploadTimeout);
-          clearInterval(progressInterval);
-
-          console.log('[Upload] Iframe yanıtı alındı');
-
-          // Iframe içeriğini okumayı dene (cross-origin olduğu için genellikle okunamaz)
-          try {
-            var iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-            var responseText = iframeDoc.body ? iframeDoc.body.textContent : '';
-            console.log('[Upload] Iframe yanıtı:', responseText);
-            
-            if (responseText) {
-              try {
-                var result = JSON.parse(responseText);
-                if (result.success) {
-                  console.log('[Upload] ✅ Başarılı! File ID:', result.fileId);
-                  updateProgress(100, 'Tamamlandı!');
-                  setTimeout(function() {
-                    resolve(result);
-                    document.body.removeChild(form);
-                    document.body.removeChild(iframe);
-                  }, 300);
-                  return;
-                } else {
-                  console.error('[Upload] ❌ Sunucu hatası:', result.error);
-                  document.body.removeChild(form);
-                  document.body.removeChild(iframe);
-                  reject(new Error(result.error || 'Sunucu hatası'));
-                  return;
-                }
-              } catch(e) {
-                console.log('[Upload] Yanıt JSON değil, yükleme varsayılan olarak başarılı kabul ediliyor');
-              }
-            }
-          } catch(crossOriginError) {
-            console.log('[Upload] Cross-origin kısıtlaması — yanıt okunamadı (bu normal)');
-          }
-
-          // Cross-origin kısıtlaması varsa: Galeri üzerinden doğrulama yap
-          updateProgress(95, 'Doğrulanıyor...');
+        // Fetch no-cors ile "text/plain" formatında gönder.
+        // Bu URL-encode kullanılmasını önler, veri kaybı yaşatmaz.
+        fetch(API_BASE, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        })
+        .then(function() {
+          clearTimeout(timeoutId);
+          console.log('[Upload] Fetch tamamlandı, veri iletildi (no-cors)');
+          updateProgress(90, 'Yükleme doğrulaniyor...');
           
+          // Google sunucusunda işlenmesi için kısa bir bekleme
           setTimeout(function() {
             verifyUpload(file.name).then(function(verified) {
-              updateProgress(100, 'Tamamlandı!');
-              setTimeout(function() {
-                resolve({ success: true, verified: verified });
-                try {
-                  document.body.removeChild(form);
-                  document.body.removeChild(iframe);
-                } catch(e) {}
-              }, 300);
+              clearInterval(progressInterval);
+              if (verified) {
+                console.log('[Upload] ✅ Başarılı!');
+                updateProgress(100, 'Tamamlandı!');
+                setTimeout(function() { resolve({ success: true }); }, 300);
+              } else {
+                console.error('[Upload] ❌ Doğrulama başarısız. Dosya Drive\'da bulunamadı.');
+                reject(new Error('Fotoğraf kaydedilemedi. Çok büyük olabilir veya sistemsel hata oluştu.'));
+              }
             });
-          }, 3000); // GAS'a işlenmesi için 3 saniye bekle
-        };
-
-        iframe.onerror = function() {
-          clearTimeout(uploadTimeout);
+          }, 4000); // 4 saniye bekle
+        })
+        .catch(function(error) {
+          clearTimeout(timeoutId);
           clearInterval(progressInterval);
-          console.error('[Upload] ❌ Iframe hata');
-          try {
-            document.body.removeChild(form);
-            document.body.removeChild(iframe);
-          } catch(e) {}
-          reject(new Error('Yükleme sırasında bağlantı hatası oluştu.'));
-        };
-
-        form.submit();
-        console.log('[Upload] Form gönderildi');
+          console.error('[Upload] ❌ Fetch hatası:', error.message);
+          
+          if (error.name === 'AbortError') {
+            reject(new Error('Yükleme zaman aşımına uğradı (60sn). Lütfen daha küçük boyutlu bir fotoğraf deneyin.'));
+          } else {
+            reject(new Error('İnternet bağlantınız koptu veya sunucuya ulaşılamadı.'));
+          }
+        });
       };
       
       reader.onerror = function() {
