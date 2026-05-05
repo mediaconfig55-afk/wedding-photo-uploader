@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="description" content="Düğün fotoğraflarınızı paylaşın. QR kodu okutun, fotoğraf çekin veya galeriden seçin, anında paylaşın!">
+  <meta name="theme-color" content="#1a1a2e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="format-detection" content="telephone=no">
+
+  <title>Düğün Fotoğraf Paylaşımı</title>
+
+  <!-- Google Fonts — Playfair Display (şık düğün fontu) + Inter (okunabilir) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+  <!-- HEIC dönüştürücü — iPhone fotoğrafları için -->
+  <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+
+  <!-- Resim sıkıştırma — büyük dosyalar için -->
+  <script src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/dist/browser-image-compression.js"></script>
+
+  <!-- Stil dosyası -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ============================================ -->
+  <!-- DARK MODE TOGGLE -->
+  <!-- ============================================ -->
+  <button id="darkModeToggle" class="dark-mode-toggle" aria-label="Karanlık mod">
+    <span class="toggle-icon">🌙</span>
+  </button>
+
+  <!-- ============================================ -->
+  <!-- HEADER — Düğün Başlığı -->
+  <!-- ============================================ -->
+  <header class="hero">
+    <div class="hero-overlay"></div>
+    <div class="hero-content">
+      <div class="ornament">✦</div>
+      <h1 id="weddingTitle" class="wedding-title">Düğünümüze Hoş Geldiniz</h1>
+      <p id="weddingDate" class="wedding-date"></p>
+      <div class="ornament">✦</div>
+      <p class="hero-subtitle">Anılarınızı bizimle paylaşın</p>
+    </div>
+  </header>
+
+  <!-- ============================================ -->
+  <!-- ANA İÇERİK -->
+  <!-- ============================================ -->
+  <main class="container">
+
+    <!-- ============================================ -->
+    <!-- FOTOĞRAF YÜKLEME BÖLÜMÜ -->
+    <!-- ============================================ -->
+    <section class="upload-section" id="uploadSection">
+      <div class="section-header">
+        <h2>📸 Fotoğraf Paylaş</h2>
+        <p>Çektiğiniz fotoğrafları yükleyin, tüm misafirler görsün!</p>
+      </div>
+
+      <!-- Fotoğraf Seçim Butonları -->
+      <div class="photo-buttons">
+        <button id="btnGallery" class="btn btn-gallery" type="button">
+          <span class="btn-icon">🖼️</span>
+          <span class="btn-text">Galeriden Seç</span>
+        </button>
+        <button id="btnCamera" class="btn btn-camera" type="button">
+          <span class="btn-icon">📷</span>
+          <span class="btn-text">Fotoğraf Çek</span>
+        </button>
+      </div>
+
+      <!-- Gizli file input'ları — iOS ve Android uyumluluğu -->
+      <input type="file" id="fileGallery" accept="image/*" hidden>
+      <input type="file" id="fileCamera" accept="image/*" capture="environment" hidden>
+
+      <!-- Fotoğraf Önizleme -->
+      <div id="previewContainer" class="preview-container" style="display: none;">
+        <div class="preview-wrapper">
+          <img id="previewImage" class="preview-image" alt="Seçilen fotoğraf">
+          <button id="btnRemovePhoto" class="btn-remove" type="button" aria-label="Fotoğrafı kaldır">✕</button>
+        </div>
+        <p class="preview-info" id="previewInfo"></p>
+      </div>
+
+      <!-- İsim ve Yorum Alanları -->
+      <div id="formFields" class="form-fields" style="display: none;">
+        <div class="form-group">
+          <label for="guestName">
+            <span class="label-icon">👤</span> İsminiz (isteğe bağlı)
+          </label>
+          <input type="text" id="guestName" placeholder="Adınızı yazın..." maxlength="50" autocomplete="name">
+        </div>
+        <div class="form-group">
+          <label for="guestComment">
+            <span class="label-icon">💬</span> Mesajınız (isteğe bağlı)
+          </label>
+          <textarea id="guestComment" placeholder="Çiftemize mesajınız..." maxlength="300" rows="3"></textarea>
+          <span class="char-count" id="charCount">0/300</span>
+        </div>
+
+        <!-- Yükleme Butonu -->
+        <button id="btnUpload" class="btn btn-upload" type="button">
+          <span class="btn-icon">🚀</span>
+          <span class="btn-text">Fotoğrafı Yükle</span>
+        </button>
+      </div>
+
+      <!-- Progress Bar -->
+      <div id="progressContainer" class="progress-container" style="display: none;">
+        <div class="progress-label">
+          <span id="progressText">Yükleniyor...</span>
+          <span id="progressPercent">0%</span>
+        </div>
+        <div class="progress-bar">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <p id="progressDetail" class="progress-detail"></p>
+      </div>
+
+      <!-- Başarı Mesajı -->
+      <div id="successMessage" class="success-message" style="display: none;">
+        <div class="success-animation">
+          <div class="confetti-container" id="confettiContainer"></div>
+          <div class="success-icon">🎉</div>
+          <h3>Teşekkür Ederiz!</h3>
+          <p>Fotoğrafınız başarıyla yüklendi.</p>
+          <button id="btnNewPhoto" class="btn btn-new-photo" type="button">
+            <span class="btn-icon">📸</span>
+            <span class="btn-text">Başka Fotoğraf Yükle</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Hata Mesajı -->
+      <div id="errorMessage" class="error-message" style="display: none;">
+        <div class="error-content">
+          <span class="error-icon">⚠️</span>
+          <p id="errorText"></p>
+          <button id="btnRetry" class="btn btn-retry" type="button">Tekrar Dene</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================ -->
+    <!-- GALERİ BÖLÜMÜ -->
+    <!-- ============================================ -->
+    <section class="gallery-section" id="gallerySection">
+      <div class="section-header">
+        <h2>🎊 Paylaşılan Anılar</h2>
+        <p id="photoCount">Fotoğraflar yükleniyor...</p>
+      </div>
+
+      <!-- Galeri Grid -->
+      <div id="galleryGrid" class="gallery-grid">
+        <!-- Fotoğraflar JavaScript ile doldurulur -->
+      </div>
+
+      <!-- Boş galeri mesajı -->
+      <div id="emptyGallery" class="empty-gallery" style="display: none;">
+        <span class="empty-icon">📷</span>
+        <p>Henüz fotoğraf yüklenmemiş.</p>
+        <p>İlk fotoğrafı siz yükleyin!</p>
+      </div>
+
+      <!-- Galeri yükleniyor animasyonu -->
+      <div id="galleryLoading" class="gallery-loading">
+        <div class="spinner"></div>
+        <p>Fotoğraflar yükleniyor...</p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ============================================ -->
+  <!-- LIGHTBOX MODAL -->
+  <!-- ============================================ -->
+  <div id="lightboxModal" class="lightbox-modal" style="display: none;">
+    <div class="lightbox-overlay" id="lightboxOverlay"></div>
+    <div class="lightbox-content">
+      <button class="lightbox-close" id="lightboxClose" aria-label="Kapat">✕</button>
+      <button class="lightbox-nav lightbox-prev" id="lightboxPrev" aria-label="Önceki">❮</button>
+      <button class="lightbox-nav lightbox-next" id="lightboxNext" aria-label="Sonraki">❯</button>
+      <img id="lightboxImage" class="lightbox-image" alt="Fotoğraf">
+      <div class="lightbox-info">
+        <p class="lightbox-name" id="lightboxName"></p>
+        <p class="lightbox-comment" id="lightboxComment"></p>
+        <p class="lightbox-time" id="lightboxTime"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- FOOTER -->
+  <!-- ============================================ -->
+  <footer class="footer">
+    <p>💕 Sevgiyle hazırlandı</p>
+  </footer>
+
+  <!-- Uygulama JavaScript -->
+  <script src="app.js"></script>
+
+</body>
+</html>
