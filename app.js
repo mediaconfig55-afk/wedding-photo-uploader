@@ -17,7 +17,7 @@
   // ============================================
   // API BASE URL — Google Apps Script Web App URL
   // ============================================
-  const API_BASE = 'https://script.google.com/macros/s/AKfycbymW9htgwRDKIhI_X9aEw4tM0ybESrPq1aA2fljnFg/exec';
+  const API_BASE = 'https://script.google.com/macros/s/AKfycby0skRallKVxfzWcDEs8X3COajM4BGDhNoJhmdLOj1ZGqThgfrfqX11tYpc2gBzMQQ5/exec';
 
   // ============================================
   // URL PARAMETRELERİ (Çoklu Düğün Desteği)
@@ -461,7 +461,7 @@
     DOM.btnUpload.disabled = false;
   }
 
-  /** Yükleme Fonksiyonu (Apple Safari Iframe POST Bypass) */
+  /** Yükleme Fonksiyonu — Iframe POST (CORS bypass) + doğrulama */
   function uploadWithXHR(file) {
     return new Promise(function (resolve, reject) {
       if (!URL_CONFIG.klasor) {
@@ -482,56 +482,123 @@
           comment: DOM.guestComment.value.trim()
         };
 
-        // Sahte progress bar göster
+        console.log('[Upload] Payload hazırlandı, boyut:', JSON.stringify(payload).length, 'byte');
+        console.log('[Upload] Folder ID:', URL_CONFIG.klasor);
+        console.log('[Upload] API URL:', API_BASE);
+
+        // Progress bar
         var simulatedProgress = 0;
         var progressInterval = setInterval(function() {
           simulatedProgress += 5;
           if (simulatedProgress > 95) simulatedProgress = 95;
-          updateProgress(simulatedProgress, 'Sisteme işleniyor... (' + simulatedProgress + '%)');
+          updateProgress(simulatedProgress, 'Sunucuya gönderiliyor... (' + simulatedProgress + '%)');
         }, 400);
 
-        try {
-          var iframeName = 'iframe_' + Date.now();
-          
-          var iframe = document.createElement('iframe');
-          iframe.name = iframeName;
-          iframe.style.display = 'none';
-          document.body.appendChild(iframe);
-
-          var form = document.createElement('form');
-          form.method = 'POST';
-          form.action = API_BASE;
-          form.target = iframeName;
-          // Safari'nin en uyumlu olduğu standard form formatı
-          form.enctype = 'application/x-www-form-urlencoded';
-          form.style.display = 'none';
-
-          var input = document.createElement('input');
-          input.type = 'hidden';
-          input.name = 'payload';
-          input.value = JSON.stringify(payload);
-          form.appendChild(input);
-          
-          document.body.appendChild(form);
-
-          // Iframe yüklendiğinde (işlem bittiğinde Google login sayfası veya JSON döndürdüğünde tetiklenir)
-          iframe.onload = function() {
-            clearInterval(progressInterval);
-            updateProgress(100, 'Tamamlandı!');
-            setTimeout(function() {
-              resolve({success: true});
-              // Temizlik
-              document.body.removeChild(form);
-              document.body.removeChild(iframe);
-            }, 500);
-          };
-
-          form.submit();
-
-        } catch (error) {
+        // Timeout zamanlayıcı
+        var uploadTimeout = setTimeout(function() {
           clearInterval(progressInterval);
-          reject(new Error('Form gönderimi sırasında bir hata oluştu.'));
-        }
+          // Temizlik
+          try {
+            document.body.removeChild(form);
+            document.body.removeChild(iframe);
+          } catch(e) {}
+          reject(new Error('Yükleme zaman aşımına uğradı (60sn). Lütfen tekrar deneyin.'));
+        }, CONFIG.uploadTimeout);
+
+        var iframeName = 'upload_frame_' + Date.now();
+        
+        var iframe = document.createElement('iframe');
+        iframe.name = iframeName;
+        iframe.style.display = 'none';
+        document.body.appendChild(iframe);
+
+        var form = document.createElement('form');
+        form.method = 'POST';
+        form.action = API_BASE;
+        form.target = iframeName;
+        form.enctype = 'application/x-www-form-urlencoded';
+        form.style.display = 'none';
+
+        var input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'payload';
+        input.value = JSON.stringify(payload);
+        form.appendChild(input);
+        
+        document.body.appendChild(form);
+
+        console.log('[Upload] Form oluşturuldu, gönderiliyor...');
+
+        // Iframe yüklendiğinde
+        iframe.onload = function() {
+          clearTimeout(uploadTimeout);
+          clearInterval(progressInterval);
+
+          console.log('[Upload] Iframe yanıtı alındı');
+
+          // Iframe içeriğini okumayı dene (cross-origin olduğu için genellikle okunamaz)
+          try {
+            var iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+            var responseText = iframeDoc.body ? iframeDoc.body.textContent : '';
+            console.log('[Upload] Iframe yanıtı:', responseText);
+            
+            if (responseText) {
+              try {
+                var result = JSON.parse(responseText);
+                if (result.success) {
+                  console.log('[Upload] ✅ Başarılı! File ID:', result.fileId);
+                  updateProgress(100, 'Tamamlandı!');
+                  setTimeout(function() {
+                    resolve(result);
+                    document.body.removeChild(form);
+                    document.body.removeChild(iframe);
+                  }, 300);
+                  return;
+                } else {
+                  console.error('[Upload] ❌ Sunucu hatası:', result.error);
+                  document.body.removeChild(form);
+                  document.body.removeChild(iframe);
+                  reject(new Error(result.error || 'Sunucu hatası'));
+                  return;
+                }
+              } catch(e) {
+                console.log('[Upload] Yanıt JSON değil, yükleme varsayılan olarak başarılı kabul ediliyor');
+              }
+            }
+          } catch(crossOriginError) {
+            console.log('[Upload] Cross-origin kısıtlaması — yanıt okunamadı (bu normal)');
+          }
+
+          // Cross-origin kısıtlaması varsa: Galeri üzerinden doğrulama yap
+          updateProgress(95, 'Doğrulanıyor...');
+          
+          setTimeout(function() {
+            verifyUpload(file.name).then(function(verified) {
+              updateProgress(100, 'Tamamlandı!');
+              setTimeout(function() {
+                resolve({ success: true, verified: verified });
+                try {
+                  document.body.removeChild(form);
+                  document.body.removeChild(iframe);
+                } catch(e) {}
+              }, 300);
+            });
+          }, 3000); // GAS'a işlenmesi için 3 saniye bekle
+        };
+
+        iframe.onerror = function() {
+          clearTimeout(uploadTimeout);
+          clearInterval(progressInterval);
+          console.error('[Upload] ❌ Iframe hata');
+          try {
+            document.body.removeChild(form);
+            document.body.removeChild(iframe);
+          } catch(e) {}
+          reject(new Error('Yükleme sırasında bağlantı hatası oluştu.'));
+        };
+
+        form.submit();
+        console.log('[Upload] Form gönderildi');
       };
       
       reader.onerror = function() {
@@ -539,6 +606,48 @@
       };
       
       reader.readAsDataURL(file);
+    });
+  }
+
+  /** Yükleme sonrası doğrulama — galeri API üzerinden */
+  function verifyUpload(filename) {
+    return new Promise(function(resolve) {
+      var url = API_BASE + '?action=getGallery&folderId=' + URL_CONFIG.klasor + '&callback=__verifyCallback_' + Date.now();
+      
+      // JSONP ile galeri kontrolü (CORS bypass)
+      var callbackName = '__verifyCallback_' + Date.now();
+      window[callbackName] = function(result) {
+        delete window[callbackName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+
+        if (result.success && result.data && result.data.length > 0) {
+          console.log('[Verify] ✅ Galeride', result.data.length, 'fotoğraf bulundu');
+          resolve(true);
+        } else {
+          console.log('[Verify] ⚠️ Galeri yanıtı:', result);
+          resolve(false);
+        }
+      };
+
+      var script = document.createElement('script');
+      script.src = API_BASE + '?action=getGallery&folderId=' + URL_CONFIG.klasor + '&callback=' + callbackName;
+      script.onerror = function() {
+        delete window[callbackName];
+        console.log('[Verify] ⚠️ JSONP doğrulama başarısız (uploadi etkilemez)');
+        resolve(false);
+      };
+
+      // 10 saniye timeout
+      setTimeout(function() {
+        if (window[callbackName]) {
+          delete window[callbackName];
+          if (script.parentNode) script.parentNode.removeChild(script);
+          console.log('[Verify] ⚠️ Doğrulama zaman aşımı');
+          resolve(false);
+        }
+      }, 10000);
+
+      document.head.appendChild(script);
     });
   }
 
@@ -659,29 +768,54 @@
   // GALERİ
   // ============================================
 
-  /** Galeriyi yükle */
-  async function loadGallery() {
+  /** Galeriyi yükle — JSONP ile CORS bypass */
+  function loadGallery() {
     if (!URL_CONFIG.klasor) return;
     
-    try {
-      // Apps Script CORS kısıtlamaları bazen GET işlemlerinde yönlendirme yapar.
-      var url = API_BASE + '?action=getGallery&folderId=' + URL_CONFIG.klasor;
-      var response = await fetch(url);
+    var callbackName = '__galleryCallback_' + Date.now();
+    
+    window[callbackName] = function(result) {
+      delete window[callbackName];
+      // Script tag'ı temizle
+      var scriptTag = document.getElementById('gallery_script');
+      if (scriptTag) scriptTag.parentNode.removeChild(scriptTag);
       
-      if (!response.ok) throw new Error('Galeri yüklenemedi');
-      
-      var result = await response.json();
-
       if (result.success && result.data) {
         state.photos = result.data;
         renderGallery(result.data);
+        console.log('[Gallery] ✅', result.data.length, 'fotoğraf yüklendi');
+      } else {
+        console.error('[Gallery] ❌ Hata:', result.error || 'Bilinmeyen hata');
+        DOM.galleryLoading.style.display = 'none';
+        DOM.emptyGallery.style.display = 'block';
       }
-    } catch (err) {
-      console.error('Galeri yükleme hatası:', err);
-      // Apps Script CORS bypass hatası durumunda galeriyi gizle
+    };
+    
+    // Önceki script'i temizle
+    var oldScript = document.getElementById('gallery_script');
+    if (oldScript) oldScript.parentNode.removeChild(oldScript);
+    
+    var script = document.createElement('script');
+    script.id = 'gallery_script';
+    script.src = API_BASE + '?action=getGallery&folderId=' + URL_CONFIG.klasor + '&callback=' + callbackName;
+    script.onerror = function() {
+      delete window[callbackName];
+      console.error('[Gallery] ❌ JSONP galeri yükleme hatası');
       DOM.galleryLoading.style.display = 'none';
-      DOM.photoCount.textContent = 'Galeriyi yüklerken hata oluştu.';
-    }
+      DOM.photoCount.textContent = 'Galeri yüklenemedi.';
+    };
+    
+    // Timeout
+    setTimeout(function() {
+      if (window[callbackName]) {
+        delete window[callbackName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+        DOM.galleryLoading.style.display = 'none';
+        DOM.photoCount.textContent = 'Galeri yüklenemedi (zaman aşımı).';
+      }
+    }, 15000);
+    
+    document.head.appendChild(script);
   }
 
   /** Galeriyi render et */

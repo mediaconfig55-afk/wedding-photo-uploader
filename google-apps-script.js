@@ -95,13 +95,20 @@ function doGet(e) {
           var desc = file.getDescription() || '';
           var nameMatch = desc.match(/Misafir: (.*)\n/);
           var commentMatch = desc.match(/Yorum: (.*)/);
+          var fileId = file.getId();
+          
+          // DriveApp'te getThumbnailUrl ve getDownloadUrl yok
+          // Google Drive URL şablonları kullan
+          var thumbnailUrl = 'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w500';
+          var fullUrl = 'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w1920';
+          var downloadUrl = 'https://drive.google.com/uc?export=download&id=' + fileId;
           
           data.push({
-            id: file.getId(),
+            id: fileId,
             name: file.getName(),
-            thumbnailUrl: file.getThumbnailUrl() ? file.getThumbnailUrl().replace(/=s\d+/, '=s500') : file.getDownloadUrl(),
-            fullUrl: file.getThumbnailUrl() ? file.getThumbnailUrl().replace(/=s\d+/, '=s1920') : file.getDownloadUrl(),
-            downloadUrl: file.getDownloadUrl(),
+            thumbnailUrl: thumbnailUrl,
+            fullUrl: fullUrl,
+            downloadUrl: downloadUrl,
             createdTime: file.getDateCreated(),
             guestName: nameMatch ? nameMatch[1] : 'Anonim',
             comment: commentMatch ? commentMatch[1] : ''
