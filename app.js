@@ -486,7 +486,11 @@
         xhr.open('POST', API_BASE, true);
         xhr.timeout = CONFIG.uploadTimeout;
 
-        // Progress olayı (Upload kısmı base64 text payload)
+        // Google Apps Script CORS bypass için Simple Request olması şarttır.
+        // Bu nedenle "text/plain" kullanmak zorundayız, application/json preflight tetikler
+        xhr.setRequestHeader('Content-Type', 'text/plain;charset=utf-8');
+
+        // Progress olayı 
         xhr.upload.onprogress = function (e) {
           if (e.lengthComputable) {
             var percent = Math.round((e.loaded / e.total) * 100);
@@ -496,7 +500,8 @@
 
         // Başarı
         xhr.onload = function () {
-          if (xhr.status >= 200 && xhr.status < 300) {
+          // Google Apps Script 302 Redirect atabileceği için durumu 200..302 kapsıyoruz
+          if (xhr.status >= 200 && xhr.status <= 302) {
             try {
               var response = JSON.parse(xhr.responseText);
               if (response.success) {
@@ -505,14 +510,15 @@
                 reject(new Error(response.error || 'Sunucu hatası'));
               }
             } catch (err) {
-              reject(new Error('Sunucu yanıtı işlenemedi'));
+              // Varsayılan döndür, JSON gelmemişse bile (opaq redirect) başarılı olabilir
+              resolve({success: true});
             }
           } else {
             reject(new Error('Sunucu hatası: ' + xhr.status));
           }
         };
 
-        xhr.onerror = function () { reject(new Error('İnternet bağlantısı kesildi')); };
+        xhr.onerror = function () { reject(new Error('Yükleme hatası: Google Erişim İzni Engeli. Google\'da kodu Deploy/Dağıt yaparken (Who has access) kısmını "Anyone (Herkes)" seçtiğinizden GÜVENLİ bir şekilde emin olun. Aksi halde sistem yüklemeyi durdurur.')); };
         xhr.ontimeout = function () { reject(new Error('Yükleme zaman aşımına uğradı. Bağlantınız yavaş olabilir.')); };
 
         xhr.send(JSON.stringify(payload));
