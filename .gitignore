@@ -3,3 +3,4 @@ backend/.env
 backend/service-account-key.json
 .DS_Store
 qr-generator/output/
+backend/
