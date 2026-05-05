@@ -10,8 +10,19 @@
 
 function doPost(e) {
   try {
-    // Safari Iframe hack için form verisinden okuma veya fetch okuma
-    var payloadStr = (e.parameter && e.parameter.payload) ? e.parameter.payload : (e.postData ? e.postData.contents : null);
+    var payloadStr = null;
+    
+    // Gelen veriyi her türlü formattan kurtararak güvenle al
+    if (e.postData && e.postData.contents) {
+      payloadStr = e.postData.contents;
+      // Eğer form URL-encoded geldiyse "payload=" prefixini kes ve decode et
+      if (payloadStr.indexOf('payload=') === 0) {
+        payloadStr = decodeURIComponent(payloadStr.substring(8).replace(/\+/g, ' '));
+      }
+    } else if (e.parameter && e.parameter.payload) {
+      payloadStr = e.parameter.payload;
+    }
+    
     if (!payloadStr) throw new Error("Veri okunamadı");
     
     // Gelen veriyi parse et
