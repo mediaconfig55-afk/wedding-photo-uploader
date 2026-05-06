@@ -159,17 +159,35 @@
     }
   }
 
-  /** Düğün tarihini güzel formata çevir */
+  /** Düğün tarihini güzel formata çevir (YYYY-MM-DD veya DD-MM-YYYY destekler) */
   function formatWeddingDate(dateStr) {
     try {
       var parts = dateStr.split('-');
+      if (parts.length < 3) return dateStr;
+      
       var months = [
         'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
         'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'
       ];
-      var day = parseInt(parts[2], 10);
-      var monthIndex = parseInt(parts[1], 10) - 1;
-      var year = parts[0];
+      
+      var day, monthIndex, year;
+      
+      // YYYY-MM-DD formatı mı? (ilk parça 4 haneli)
+      if (parts[0].length === 4) {
+        year = parts[0];
+        monthIndex = parseInt(parts[1], 10) - 1;
+        day = parseInt(parts[2], 10);
+      } else {
+        // DD-MM-YYYY formatı
+        day = parseInt(parts[0], 10);
+        monthIndex = parseInt(parts[1], 10) - 1;
+        year = parts[2];
+      }
+      
+      if (isNaN(day) || isNaN(monthIndex) || monthIndex < 0 || monthIndex > 11) {
+        return dateStr;
+      }
+      
       return day + ' ' + months[monthIndex] + ' ' + year;
     } catch (e) {
       return dateStr;
