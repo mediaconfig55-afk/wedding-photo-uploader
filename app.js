@@ -511,7 +511,8 @@
         form.method = 'POST';
         form.action = API_BASE;
         form.target = iframeName;
-        form.enctype = 'application/x-www-form-urlencoded';
+        // %100 Güvenli yöntem: multipart/form-data veri şifrelemez, limitlere takılmaz
+        form.enctype = 'multipart/form-data';
         form.style.display = 'none';
 
         var input = document.createElement('input');
@@ -530,23 +531,37 @@
           console.log('[Upload] İsteğe yanıt alındı. Veri doğrulaniyor...');
           updateProgress(90, 'Doğrulanıyor...');
 
-          // Google Drive'da indekslenmesi için 4 saniye bekle
-          setTimeout(function() {
+          // Doğrulama mekanizması (Google Drive bazen geç indeksler, bu yüzden 3 kere deneriz)
+          var verifyAttempts = 0;
+          
+          function attemptVerify() {
+            verifyAttempts++;
             verifyUpload(file.name).then(function(verified) {
               if (verified) {
                 console.log('[Upload] ✅ Başarılı!');
                 updateProgress(100, 'Tamamlandı!');
                 setTimeout(function() { resolve({ success: true }); }, 300);
+                cleanup();
+              } else if (verifyAttempts < 4) {
+                console.log('[Upload] Henüz bulunamadı, tekrar deneniyor... (' + verifyAttempts + ')');
+                setTimeout(attemptVerify, 3000);
               } else {
-                console.error('[Upload] ❌ Sunucuda bulunamadı.');
-                reject(new Error('Fotoğraf kaydedilemedi.'));
+                console.error('[Upload] ❌ Sunucuda bulunamadı (Tüm denemeler başarısız).');
+                reject(new Error('Fotoğraf kaydedilemedi. Google Drive yetki sorunu veya sistemsel hata.'));
+                cleanup();
               }
-              try {
-                document.body.removeChild(form);
-                document.body.removeChild(iframe);
-              } catch(err) {}
             });
-          }, 4000);
+          }
+          
+          function cleanup() {
+            try {
+              document.body.removeChild(form);
+              document.body.removeChild(iframe);
+            } catch(err) {}
+          }
+          
+          // İlk doğrulamayı 3 saniye sonra yap
+          setTimeout(attemptVerify, 3000);
         };
 
         iframe.onerror = function() {

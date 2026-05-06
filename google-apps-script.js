@@ -12,32 +12,51 @@ function doPost(e) {
   try {
     var payloadStr = null;
     
-    // Gelen veriyi her türlü formattan kurtararak güvenle al
-    if (e.postData && e.postData.contents) {
-      payloadStr = e.postData.contents;
-      // Eğer form URL-encoded geldiyse "payload=" prefixini kes ve decode et
-      if (payloadStr.indexOf('payload=') === 0) {
-        payloadStr = decodeURIComponent(payloadStr.substring(8).replace(/\+/g, ' '));
-      }
-    } else if (e.parameter && e.parameter.payload) {
+    // Gelen veriyi güvenle çıkartma
+    if (e.parameter && e.parameter.payload) {
+      // 1. Multipart Form Data veya standart Form submission
       payloadStr = e.parameter.payload;
+    } else if (e.postData && e.postData.contents) {
+      // 2. Raw Body Fallback (text/plain veya application/json)
+      var contents = e.postData.contents;
+      if (contents.indexOf('payload=') === 0) {
+        payloadStr = decodeURIComponent(contents.substring(8).replace(/\+/g, ' '));
+      } else if (contents.endsWith('=')) {
+        payloadStr = contents.slice(0, -1);
+      } else {
+        payloadStr = contents;
+      }
     }
     
-    if (!payloadStr) throw new Error("Veri okunamadı");
+    if (!payloadStr) {
+      throw new Error("Veri sunucuya ulaşamadı (boş payload). Fotoğraf boyutu çok yüksek olabilir.");
+    }
     
-    // Gelen veriyi parse et
-    var data = JSON.parse(payloadStr);
+    // JSON'u parse et
+    var data;
+    try {
+      data = JSON.parse(payloadStr);
+    } catch(err) {
+      throw new Error("Veri formatı çözülemedi. Payload bozulmuş olabilir.");
+    }
     
     // Gerekli veriler
     var base64Data = data.file;
-    var filename = data.filename;
-    var mimeType = data.mimeType;
-    var folderId = data.folderId;  // Frontend'den URL parametresi olarak gelecek
+    if (!base64Data) throw new Error("Fotoğraf verisi (base64) aktarılamadı.");
+    
+    var filename = data.filename || "image.jpg";
+    var mimeType = data.mimeType || "image/jpeg";
+    var folderId = data.folderId;  
+    if (!folderId) throw new Error("Klasör ID bulunamadı.");
+    
     var guestName = data.name || "Anonim Misafir";
     var guestComment = data.comment || "";
     
     // Base64 başlığını temizle
-    var cleanBase64 = base64Data.split(',')[1] || base64Data;
+    var cleanBase64 = base64Data;
+    if (cleanBase64.indexOf(',') !== -1) {
+      cleanBase64 = cleanBase64.split(',')[1];
+    }
     
     // Blob oluştur
     var blob = Utilities.newBlob(Utilities.base64Decode(cleanBase64), mimeType, filename);
@@ -47,13 +66,16 @@ function doPost(e) {
     var file = folder.createFile(blob);
     
     // Metadata (Yorum ve İsim) dosya açıklamasına ekle
-    var description = "Misafir: " + guestName + "\nYorum: " + guestComment;
+    var description = "Misafir: " + guestName;
+    if (guestComment) {
+      description += "\nYorum: " + guestComment;
+    }
     file.setDescription(description);
     
     // Dosyayı herkes görebilecek şekilde ayarla (Galeri için)
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
     
-    // Başarı dönüşü
+    // Başarı dönüşü — 200 OK
     return ContentService.createTextOutput(JSON.stringify({
       success: true,
       fileId: file.getId(),
