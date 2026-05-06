@@ -47,15 +47,29 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       maxRedirects: 5 // 302 yönlendirmelerini otomatik takip et
     });
 
-    if (response.data && response.data.success) {
-        console.log(`[Upload Proxy] ✅ Başarılı: ${response.data.fileId}`);
+    let extData = {};
+    if (typeof response.data === 'string') {
+        const match = response.data.match(/postMessage\((.*?),\s*'\*'/);
+        if (match && match[1]) {
+            try { extData = JSON.parse(match[1]); } catch (e) { extData.success = true; }
+        } else if (response.data.includes('OK') || response.data.includes('success":true')) {
+            extData = { success: true };
+        } else {
+            extData = { success: false, error: 'Google sunucusundan geçersiz HTML yanıtı.' };
+        }
+    } else {
+        extData = response.data;
+    }
+
+    if (extData && extData.success) {
+        console.log(`[Upload Proxy] ✅ Başarılı: ${extData.fileId}`);
         res.json({
           success: true,
-          fileId: response.data.fileId,
-          url: response.data.url
+          fileId: extData.fileId || '',
+          url: extData.url || ''
         });
     } else {
-        throw new Error(response.data.error || 'Bilinmeyen bir hata oluştu');
+        throw new Error(extData.error || 'Bilinmeyen bir hata oluştu');
     }
 
   } catch (error) {
