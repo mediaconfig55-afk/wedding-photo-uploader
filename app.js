@@ -14,10 +14,7 @@
 (function () {
   'use strict';
 
-  // ============================================
-  // API BASE URL — Google Apps Script Web App URL
-  // ============================================
-  const API_BASE = 'https://script.google.com/macros/s/AKfycby0skRallKVxfzWcDEs8X3COajM4BGDhNoJhmdLOj1ZGqThgfrfqX11tYpc2gBzMQQ5/exec';
+  const API_BASE = 'https://script.google.com/macros/s/AKfycbykvcr7ZYcC4ysTgAeeyMcls-ZUep_KnDSMJ7HsyvNGyGoHryPTKFZn_kmcKSAbf781/exec';
 
   // ============================================
   // URL PARAMETRELERİ (Çoklu Düğün Desteği)
