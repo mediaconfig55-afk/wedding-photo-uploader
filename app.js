@@ -111,8 +111,8 @@
   // DURUM YÖNETİMİ (STATE)
   // ============================================
   let state = {
-    selectedFile: null,          // Seçilen dosya (File nesnesi)
-    processedFile: null,         // İşlenmiş dosya (sıkıştırma/dönüştürme sonrası)
+    selectedFiles: [],           // Seçilen dosyalar (File nesneleri)
+    processedFiles: [],          // İşlenmiş dosyalar (sıkıştırma sonrası)
     isUploading: false,          // Yükleme devam ediyor mu
     photos: [],                  // Galeri fotoğrafları
     currentLightboxIndex: -1,    // Lightbox'taki mevcut fotoğraf indeksi
@@ -277,65 +277,72 @@
   // FOTOĞRAF SEÇİMİ VE İŞLEME
   // ============================================
 
-  /** Dosya seçildiğinde çalışır */
+  /** Dosyalar seçildiğinde çalışır (Çoklu Seçim Desteği) */
   async function handleFileSelect(e) {
-    var file = e.target.files && e.target.files[0];
-    if (!file) return;
+    if (!e.target.files || e.target.files.length === 0) return;
 
-    // Dosya boyutu kontrolü
-    if (file.size > CONFIG.maxFileSize) {
-      showError('Dosya boyutu çok büyük (' + formatFileSize(file.size) + '). Maksimum 15MB yükleyebilirsiniz.');
-      return;
-    }
-
-    // Dosya tipi kontrolü
     var validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
-    var ext = file.name.split('.').pop().toLowerCase();
-    var isValidExt = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].indexOf(ext) > -1;
-
-    if (validTypes.indexOf(file.type) === -1 && !isValidExt) {
-      showError('Desteklenmeyen dosya formatı. Lütfen JPG, PNG, WebP veya HEIC formatında fotoğraf seçin.');
-      return;
-    }
-
-    state.selectedFile = file;
+    
+    state.selectedFiles = [];
+    state.processedFiles = [];
+    
     hideError();
+    DOM.previewInfo.textContent = 'Fotoğraflar işleniyor...';
+    showPreviewLoading();
 
-    // HEIC/HEIF ise JPEG'e dönüştür
-    var processedFile = file;
-    var isHEIC = (file.type === 'image/heic' || file.type === 'image/heif' ||
-      ext === 'heic' || ext === 'heif');
+    var totalBytes = 0;
 
-    if (isHEIC) {
-      DOM.previewInfo.textContent = 'HEIC formatı dönüştürülüyor...';
-      showPreviewLoading();
-      try {
-        processedFile = await convertHEIC(file);
-      } catch (err) {
-        console.error('HEIC dönüştürme hatası:', err);
-        showError('iPhone fotoğrafı dönüştürülürken hata oluştu. Lütfen fotoğrafı JPEG olarak kaydetmeyi deneyin.');
+    for (var i = 0; i < e.target.files.length; i++) {
+        var file = e.target.files[i];
+        
+        if (file.size > CONFIG.maxFileSize) {
+          showError(file.name + ' çok büyük (' + formatFileSize(file.size) + '). Maksimum 15MB yüklenebilir.');
+          continue;
+        }
+
+        var ext = file.name.split('.').pop().toLowerCase();
+        var isValidExt = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].indexOf(ext) > -1;
+
+        if (validTypes.indexOf(file.type) === -1 && !isValidExt) {
+          showError(file.name + ' desteklenmeyen bir formatta.');
+          continue;
+        }
+
+        state.selectedFiles.push(file);
+
+        var processedFile = file;
+        var isHEIC = (file.type === 'image/heic' || file.type === 'image/heif' || ext === 'heic' || ext === 'heif');
+
+        if (isHEIC) {
+          try {
+            processedFile = await convertHEIC(file);
+          } catch (err) {
+            console.error('HEIC hatası:', err);
+            continue;
+          }
+        }
+
+        try {
+          processedFile = await compressImage(processedFile);
+        } catch (err) {}
+
+        state.processedFiles.push(processedFile);
+        totalBytes += processedFile.size;
+    }
+    
+    if (state.processedFiles.length === 0) {
+        clearSelection();
         return;
-      }
     }
 
-    // Fotoğrafı sıkıştır
-    DOM.previewInfo.textContent = 'Fotoğraf optimize ediliyor...';
-    try {
-      processedFile = await compressImage(processedFile);
-    } catch (err) {
-      console.warn('Sıkıştırma hatası, orijinal dosya kullanılacak:', err);
-      // Sıkıştırma başarısız olursa orijinal dosyayı kullan
+    // İlk fotoğrafı önizlemede göster
+    showPreview(state.processedFiles[0]);
+    
+    if (state.processedFiles.length > 1) {
+        DOM.previewInfo.textContent = state.processedFiles.length + ' fotoğraf seçildi (' + formatFileSize(totalBytes) + ')';
     }
 
-    state.processedFile = processedFile;
-
-    // Önizleme göster
-    showPreview(processedFile);
-
-    // Form alanlarını göster
     DOM.formFields.style.display = 'block';
-
-    // File input'u sıfırla (aynı dosyanın tekrar seçilebilmesi için)
     e.target.value = '';
   }
 
@@ -399,8 +406,8 @@
 
   /** Seçimi temizle */
   function clearSelection() {
-    state.selectedFile = null;
-    state.processedFile = null;
+    state.selectedFiles = [];
+    state.processedFiles = [];
     DOM.previewContainer.style.display = 'none';
     DOM.formFields.style.display = 'none';
     DOM.previewImage.src = '';
@@ -412,9 +419,9 @@
   // FOTOĞRAF YÜKLEME
   // ============================================
 
-  /** Yükleme işlemini başlat */
+  /** Yükleme işlemini sıralı başlat (Retry yok - Tek seferlik, Sıralı Yükleme) */
   async function handleUpload() {
-    if (!state.processedFile) {
+    if (state.processedFiles.length === 0) {
       showError('Lütfen önce bir fotoğraf seçin.');
       return;
     }
@@ -426,37 +433,45 @@
     DOM.btnUpload.disabled = true;
     showProgress();
 
-    var retryCount = 0;
-    var success = false;
+    var successCount = 0;
+    var failCount = 0;
+    var totalFiles = state.processedFiles.length;
 
-    while (retryCount < CONFIG.maxRetries && !success) {
-      try {
-        if (retryCount > 0) {
-          updateProgress(0, 'Tekrar deneniyor... (Deneme ' + (retryCount + 1) + '/' + CONFIG.maxRetries + ')');
-          await sleep(CONFIG.retryDelay);
+    for (var i = 0; i < totalFiles; i++) {
+        var file = state.processedFiles[i];
+        var prefix = totalFiles > 1 ? '(' + (i+1) + '/' + totalFiles + ') ' : '';
+        
+        try {
+            updateProgress(0, prefix + 'Sunucu ile bağlantı kuruluyor...');
+            await uploadWithXHR(file, prefix);
+            successCount++;
+        } catch (err) {
+            console.error('Yükleme hatası:', err.message);
+            failCount++;
         }
-
-        await uploadWithXHR(state.processedFile);
-        success = true;
-      } catch (err) {
-        retryCount++;
-        console.error('Yükleme hatası (deneme ' + retryCount + '):', err.message);
-
-        if (retryCount >= CONFIG.maxRetries) {
-          hideProgress();
-          showError('Fotoğraf yüklenemedi: ' + err.message + '. Lütfen internet bağlantınızı kontrol edip tekrar deneyin.');
-        }
-      }
-    }
-
-    if (success) {
-      hideProgress();
-      showSuccess();
-      loadGallery(); // Galeriyi yenile
     }
 
     state.isUploading = false;
     DOM.btnUpload.disabled = false;
+
+    if (successCount > 0) {
+        hideProgress();
+        showSuccess();
+        
+        var messageP = DOM.successMessage.querySelector('p');
+        if (failCount > 0) {
+           messageP.textContent = successCount + ' fotoğraf yüklendi, ancak ' + failCount + ' tanesinde hata oluştu.';
+        } else if (successCount > 1) {
+           messageP.textContent = successCount + ' fotoğraf başarıyla yüklendi.';
+        } else {
+           messageP.textContent = 'Fotoğrafınız başarıyla yüklendi.';
+        }
+        
+        loadGallery(); // Galeriyi yenile
+    } else {
+        hideProgress();
+        showError('Hiçbir fotoğraf yüklenemedi. İnternet bağlantınızı kontrol edip tekrar deneyin.');
+    }
   }
 
   /**
@@ -467,7 +482,8 @@
    * - Orijinal dosya gönderimi (base64 dönüşümü yok, form şişmesi yok)
    * - Sıfır CORS ve Iframe sorunu (Node.js üzerinden temiz)
    */
-  function uploadWithXHR(file) {
+  function uploadWithXHR(file, statusPrefix) {
+    statusPrefix = statusPrefix || '';
     return new Promise(function (resolve, reject) {
       if (!URL_CONFIG.klasor) {
         reject(new Error('URL içerisinde klasör ID bulunamadı.'));
@@ -475,7 +491,7 @@
       }
 
       console.log('[Upload] Node.js Backend Upload başlatıldı...');
-      updateProgress(0, 'Sunucu ile bağlantı kuruluyor...');
+      updateProgress(0, statusPrefix + 'Sunucu ile bağlantı kuruluyor...');
 
       var formData = new FormData();
       formData.append('file', file, file.name || 'image.jpg');
@@ -492,9 +508,8 @@
         if (e.lengthComputable) {
           // Gerçek yüzdelik dilim hesaplama
           var percentComplete = Math.floor((e.loaded / e.total) * 100);
-          // UI zıplamasını engellemek için hafif tolerans
           if (percentComplete > 98) percentComplete = 98;
-          updateProgress(percentComplete, 'Yükleniyor: ' + formatFileSize(e.loaded) + ' / ' + formatFileSize(e.total));
+          updateProgress(percentComplete, statusPrefix + 'Yükleniyor: ' + formatFileSize(e.loaded) + ' / ' + formatFileSize(e.total));
         }
       };
 
