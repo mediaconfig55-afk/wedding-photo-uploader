@@ -1,15 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const { uploadFile } = require('../services/googleDrive');
+const axios = require('axios');
 
-// Dosyaları disk yerine doğrudan hafızaya (RAM) yükle
+// GAS URL'si
+const GAS_URL = process.env.VITE_GAS_URL || 'https://script.google.com/macros/s/AKfycbykvcr7ZYcC4ysTgAeeyMcls-ZUep_KnDSMJ7HsyvNGyGoHryPTKFZn_kmcKSAbf781/exec';
+
 const storage = multer.memoryStorage();
-
-// Boyut limitini 15MB olarak belirledik (çok daha hızlı ve özgür yükleme)
 const upload = multer({ 
   storage,
-  limits: { fileSize: 15 * 1024 * 1024 } 
+  limits: { fileSize: 15 * 1024 * 1024 } // 15MB 
 });
 
 router.post('/upload', upload.single('file'), async (req, res) => {
@@ -25,28 +25,42 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       return res.status(400).json({ success: false, error: 'Klasör ID eksik.' });
     }
 
-    console.log(`[Upload] Yeni dosya yükleniyor: ${file.originalname} (${file.size} bytes)`);
+    console.log(`[Upload Proxy] Yeni dosya alınıyor: ${file.originalname} (${file.size} bytes)`);
 
-    const result = await uploadFile(
-      file.buffer, 
-      file.originalname, 
-      file.mimetype, 
-      folderId, 
-      name || 'Anonim Misafir', 
-      comment || ''
-    );
+    // Base64 kodlamasına çevir
+    const base64Data = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
 
-    console.log(`[Upload] ✅ Başarılı: ${result.id}`);
-    
-    res.json({
-      success: true,
-      fileId: result.id,
-      url: result.webViewLink
+    console.log(`[Upload Proxy] Google Apps Script'e yönlendiriliyor...`);
+
+    // Google Apps Script'e yönlendir
+    const response = await axios.post(GAS_URL, JSON.stringify({
+      file: base64Data,
+      filename: file.originalname,
+      mimeType: file.mimetype,
+      folderId: folderId,
+      name: name || 'Anonim Misafir',
+      comment: comment || ''
+    }), {
+      headers: {
+        'Content-Type': 'text/plain' // GAS bu raw body'yi sever
+      },
+      maxRedirects: 5 // 302 yönlendirmelerini otomatik takip et
     });
 
+    if (response.data && response.data.success) {
+        console.log(`[Upload Proxy] ✅ Başarılı: ${response.data.fileId}`);
+        res.json({
+          success: true,
+          fileId: response.data.fileId,
+          url: response.data.url
+        });
+    } else {
+        throw new Error(response.data.error || 'Bilinmeyen bir hata oluştu');
+    }
+
   } catch (error) {
-    console.error(`[Upload] ❌ Hata: ${error.message}`);
-    res.status(500).json({ success: false, error: error.message });
+    console.error(`[Upload Proxy] ❌ Hata:`, error.response ? error.response.data : error.message);
+    res.status(500).json({ success: false, error: error.message || 'Yükleme sırasında sunucu hatası.' });
   }
 });
 
