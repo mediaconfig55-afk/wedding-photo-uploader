@@ -520,52 +520,43 @@
         
         document.body.appendChild(form);
 
-        // Form gönderimi (Safari redirect body-drop bug'ından etkilenmez)
-        iframe.onload = function() {
-          clearTimeout(uploadTimeout);
-          clearInterval(progressInterval);
-          
-          console.log('[Upload] İsteğe yanıt alındı. Veri doğrulaniyor...');
-          updateProgress(90, 'Doğrulanıyor...');
-
-          // Doğrulama mekanizması (Google Drive bazen geç indeksler, bu yüzden 3 kere deneriz)
-          var verifyAttempts = 0;
-          
-          function attemptVerify() {
-            verifyAttempts++;
-            verifyUpload(file.name).then(function(verified) {
-              if (verified) {
-                console.log('[Upload] ✅ Başarılı!');
-                updateProgress(100, 'Tamamlandı!');
-                setTimeout(function() { resolve({ success: true }); }, 300);
-                cleanup();
-              } else if (verifyAttempts < 4) {
-                console.log('[Upload] Henüz bulunamadı, tekrar deneniyor... (' + verifyAttempts + ')');
-                setTimeout(attemptVerify, 3000);
-              } else {
-                console.error('[Upload] ❌ Sunucuda bulunamadı (Tüm denemeler başarısız).');
-                reject(new Error('Fotoğraf kaydedilemedi. Google Drive yetki sorunu veya sistemsel hata.'));
-                cleanup();
-              }
-            });
+        // İframe submit olduğunda Google Apps Script bize 
+        // window.parent.postMessage(...) çalıştıran bir HTML döndürecek.
+        var messageHandler = function(event) {
+          // Google veya iframe'den gelen mesajları filtrele
+          if (event.data && typeof event.data.success !== 'undefined') {
+            clearTimeout(uploadTimeout);
+            clearInterval(progressInterval);
+            window.removeEventListener('message', messageHandler);
+            
+            if (event.data.success) {
+              console.log('[Upload] ✅ Başarılı! File ID:', event.data.fileId);
+              updateProgress(100, 'Tamamlandı!');
+              setTimeout(function() { resolve({ success: true }); cleanup(); }, 300);
+            } else {
+              console.error('[Upload] ❌ Sunucu Hatası:', event.data.error);
+              reject(new Error('Kritik Hata: ' + event.data.error));
+              cleanup();
+            }
           }
-          
-          function cleanup() {
-            try {
-              document.body.removeChild(form);
-              document.body.removeChild(iframe);
-            } catch(err) {}
-          }
-          
-          // İlk doğrulamayı 3 saniye sonra yap
-          setTimeout(attemptVerify, 3000);
         };
+        
+        window.addEventListener('message', messageHandler);
 
-        iframe.onerror = function() {
-          clearTimeout(uploadTimeout);
+        // Fallback: Timeout ve Cleanup
+        var uploadTimeout = setTimeout(function() {
           clearInterval(progressInterval);
-          reject(new Error('Bağlantı hatası oluştu.'));
-        };
+          window.removeEventListener('message', messageHandler);
+          cleanup();
+          reject(new Error('Yükleme zaman aşımına uğradı. Dosya boyutu çok büyük olabilir veya internetiniz yavaş.'));
+        }, CONFIG.uploadTimeout);
+
+        function cleanup() {
+          try {
+            document.body.removeChild(form);
+            document.body.removeChild(iframe);
+          } catch(err) {}
+        }
 
         form.submit();
       };
