@@ -14,8 +14,8 @@
 (function () {
   'use strict';
 
-  // TODO: Render.com deploy işleminden sonra buradaki URL'yi GÜNCELLEYİN!
-  const API_BASE = 'https://your-app-name.onrender.com/api';
+  // Render.com backend URL'niz:
+  const API_BASE = 'https://wedding-photo-uploader-t6wg.onrender.com/api';
 
   // ============================================
   // URL PARAMETRELERİ (Çoklu Düğün Desteği)
