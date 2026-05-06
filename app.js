@@ -475,17 +475,26 @@
             
             // Yerel Galeriye Ekle (Sadece kendisi görecek)
             var myPhotos = JSON.parse(localStorage.getItem('wedding-my-uploads') || '[]');
+            
+            // Fotoğrafın yerel blob URL'sini oluştur (fileId gelmese de çalışır)
+            var localUrl = URL.createObjectURL(file);
+            var driveId = res.response.fileId || '';
+            var thumbUrl = driveId 
+                ? 'https://drive.google.com/thumbnail?id=' + driveId + '&sz=w500' 
+                : localUrl;
+            var fullImgUrl = driveId 
+                ? 'https://drive.google.com/thumbnail?id=' + driveId + '&sz=w1920' 
+                : localUrl;
+            
             var newPhoto = {
-                id: res.response.fileId || '',
-                thumbnailUrl: 'https://drive.google.com/thumbnail?id=' + (res.response.fileId || '') + '&sz=w500',
-                fullUrl: 'https://drive.google.com/thumbnail?id=' + (res.response.fileId || '') + '&sz=w1920',
+                id: driveId || ('local-' + Date.now() + '-' + i),
+                thumbnailUrl: thumbUrl,
+                fullUrl: fullImgUrl,
                 guestName: DOM.guestName.value.trim() || 'Anonim Misafir',
                 createdTime: new Date().toISOString()
             };
-            if (newPhoto.id) {
-                myPhotos.unshift(newPhoto); // En yeni üste
-                localStorage.setItem('wedding-my-uploads', JSON.stringify(myPhotos));
-            }
+            myPhotos.unshift(newPhoto);
+            localStorage.setItem('wedding-my-uploads', JSON.stringify(myPhotos));
 
         } catch (err) {
             console.error('Yükleme hatası:', err.message);
