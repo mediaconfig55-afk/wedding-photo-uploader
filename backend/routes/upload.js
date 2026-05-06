@@ -55,18 +55,11 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       maxRedirects: 5 // 302 yönlendirmelerini otomatik takip et
     });
 
-    let extData = {};
-    if (typeof response.data === 'string') {
-        if (response.data.includes('<p>OK</p>')) {
-            extData = { success: true };
-            const idMatch = response.data.match(/"fileId":"(.*?)"/);
-            if (idMatch && idMatch[1]) extData.fileId = idMatch[1];
-        } else {
-            const errMatch = response.data.match(/<p>ERROR: (.*?)<\/p>/);
-            extData = { success: false, error: errMatch && errMatch[1] ? errMatch[1] : 'Google Drive bağlantı hatası.' };
-        }
-    } else {
-        extData = response.data;
+    let extData = response.data;
+    
+    // Eğer GAS bir şekilde hala HTML dönerse (örneğin hata sayfası), onu kontrol et
+    if (typeof extData === 'string' && extData.includes('<html')) {
+        throw new Error('Google sunucusu beklenmedik bir hata sayfası döndürdü. Lütfen Google Apps Script ayarlarını kontrol edin.');
     }
 
     if (extData && extData.success) {
@@ -77,7 +70,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
           url: extData.url || ''
         });
     } else {
-        throw new Error(extData.error || 'Bilinmeyen bir hata oluştu');
+        throw new Error((extData && extData.error) || 'Google Drive bağlantı hatası oluştu.');
     }
 
   } catch (error) {
