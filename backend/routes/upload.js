@@ -49,13 +49,13 @@ router.post('/upload', upload.single('file'), async (req, res) => {
 
     let extData = {};
     if (typeof response.data === 'string') {
-        const match = response.data.match(/postMessage\((.*?),\s*'\*'/);
-        if (match && match[1]) {
-            try { extData = JSON.parse(match[1]); } catch (e) { extData.success = true; }
-        } else if (response.data.includes('OK') || response.data.includes('success":true')) {
+        if (response.data.includes('<p>OK</p>')) {
             extData = { success: true };
+            const idMatch = response.data.match(/"fileId":"(.*?)"/);
+            if (idMatch && idMatch[1]) extData.fileId = idMatch[1];
         } else {
-            extData = { success: false, error: 'Google sunucusundan geçersiz HTML yanıtı.' };
+            const errMatch = response.data.match(/<p>ERROR: (.*?)<\/p>/);
+            extData = { success: false, error: errMatch && errMatch[1] ? errMatch[1] : 'Google Drive bağlantı hatası.' };
         }
     } else {
         extData = response.data;
