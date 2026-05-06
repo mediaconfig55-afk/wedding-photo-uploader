@@ -19,13 +19,21 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       return res.status(400).json({ success: false, error: 'Fotoğraf gönderilmedi.' });
     }
 
-    const { folderId, name, comment } = req.body;
+    const { folderId, name, comment, deviceId } = req.body;
     
     if (!folderId) {
       return res.status(400).json({ success: false, error: 'Klasör ID eksik.' });
     }
 
     console.log(`[Upload Proxy] Yeni dosya alınıyor: ${file.originalname} (${file.size} bytes)`);
+
+    // Güvenlik ve Kimlik Tespiti (IP, Cihaz, UUID)
+    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Bilinmiyor';
+    const userAgent = req.headers['user-agent'] || 'Bilinmiyor';
+    
+    // Telemetri verilerini yoruma görünmez/ek bölüme ekle
+    const telemetryBlock = `\n\n--- GÜVENLİK BİLGİSİ ---\nCihaz Kimliği: ${deviceId || 'Belirtilmemiş'}\nIP Adresi: ${clientIp}\nTarayıcı/Cihaz: ${userAgent}\nZaman: ${new Date().toISOString()}`;
+    const secureComment = (comment || '') + telemetryBlock;
 
     // Base64 kodlamasına çevir
     const base64Data = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
@@ -39,7 +47,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       mimeType: file.mimetype,
       folderId: folderId,
       name: name || 'Anonim Misafir',
-      comment: comment || ''
+      comment: secureComment
     }), {
       headers: {
         'Content-Type': 'text/plain' // GAS bu raw body'yi sever

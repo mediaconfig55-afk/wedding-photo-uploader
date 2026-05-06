@@ -129,8 +129,17 @@
     initDarkMode();
     bindEvents();
     loadGallery();
-    startGalleryAutoRefresh();
     restoreGuestName();
+  }
+
+  /** Cihaz ID oluştur veya al (Telemetri için) */
+  function getDeviceId() {
+    var id = localStorage.getItem('wedding-device-id');
+    if (!id) {
+      id = 'DEV-' + Math.random().toString(36).substring(2, 10) + '-' + Date.now();
+      localStorage.setItem('wedding-device-id', id);
+    }
+    return id;
   }
 
   /** Düğün bilgilerini URL parametrelerinden al */
@@ -443,8 +452,23 @@
         
         try {
             updateProgress(0, prefix + 'Sunucu ile bağlantı kuruluyor...');
-            await uploadWithXHR(file, prefix);
+            var res = await uploadWithXHR(file, prefix);
             successCount++;
+            
+            // Yerel Galeriye Ekle (Sadece kendisi görecek)
+            var myPhotos = JSON.parse(localStorage.getItem('wedding-my-uploads') || '[]');
+            var newPhoto = {
+                id: res.response.fileId || '',
+                thumbnailUrl: 'https://drive.google.com/thumbnail?id=' + (res.response.fileId || '') + '&sz=w500',
+                fullUrl: 'https://drive.google.com/thumbnail?id=' + (res.response.fileId || '') + '&sz=w1920',
+                guestName: DOM.guestName.value.trim() || 'Anonim Misafir',
+                createdTime: new Date().toISOString()
+            };
+            if (newPhoto.id) {
+                myPhotos.unshift(newPhoto); // En yeni üste
+                localStorage.setItem('wedding-my-uploads', JSON.stringify(myPhotos));
+            }
+
         } catch (err) {
             console.error('Yükleme hatası:', err.message);
             failCount++;
@@ -498,6 +522,7 @@
       formData.append('folderId', URL_CONFIG.klasor);
       formData.append('name', DOM.guestName.value.trim() || 'Anonim Misafir');
       formData.append('comment', DOM.guestComment.value.trim());
+      formData.append('deviceId', getDeviceId());
 
       var xhr = new XMLHttpRequest();
       xhr.open('POST', API_BASE + '/upload', true);
@@ -669,33 +694,18 @@
   // GALERİ
   // ============================================
 
-  /** Galeriyi yükle — Node.js Backend API (Fetch) */
+  /** Galeriyi yükle — Sadece Cihazdaki Yerel Fotoğrafları Yükler (Kişisel Galeri) */
   function loadGallery() {
     if (!URL_CONFIG.klasor) return;
     
-    fetch(API_BASE + '/gallery?folderId=' + URL_CONFIG.klasor)
-      .then(function(response) {
-        if (!response.ok) {
-          throw new Error('HTTP hatası: ' + response.status);
-        }
-        return response.json();
-      })
-      .then(function(result) {
-        if (result.success && result.data) {
-          state.photos = result.data;
-          renderGallery(result.data);
-          console.log('[Gallery] ✅', result.data.length, 'fotoğraf yüklendi');
-        } else {
-          console.error('[Gallery] ❌ Hata:', result.error || 'Bilinmeyen hata');
-          DOM.galleryLoading.style.display = 'none';
-          DOM.emptyGallery.style.display = 'block';
-        }
-      })
-      .catch(function(error) {
-        console.error('[Gallery] ❌ Galeri yükleme hatası:', error.message);
-        DOM.galleryLoading.style.display = 'none';
-        DOM.photoCount.textContent = 'Galeri yüklenemedi.';
-      });
+    var myPhotos = JSON.parse(localStorage.getItem('wedding-my-uploads') || '[]');
+    state.photos = myPhotos;
+    
+    // Küçük bir gecikme ile göster, UI tepkiseli olsun
+    setTimeout(function() {
+      renderGallery(myPhotos);
+      console.log('[Gallery] ✅ Yerel cihazdan', myPhotos.length, 'fotoğraf yüklendi');
+    }, 200);
   }
 
   /** Galeriyi render et */
@@ -768,13 +778,9 @@
     }
   }
 
-  /** Galeri otomatik yenileme */
+  /** Galeri otomatik yenileme (Yerel galeride iptal edildi) */
   function startGalleryAutoRefresh() {
-    state.galleryTimer = setInterval(function () {
-      if (!state.isUploading) {
-        loadGallery();
-      }
-    }, CONFIG.galleryRefreshInterval);
+    // İptal edildi çünkü herkes sadece kendi yüklediğini görüyor (Refresh'e gerek yok)
   }
 
   // ============================================
