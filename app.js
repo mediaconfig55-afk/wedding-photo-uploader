@@ -31,12 +31,15 @@
   // ============================================
   const CONFIG = {
     maxFileSize: 15 * 1024 * 1024,       // 15MB ham dosya limiti
-    compressionMaxSizeMB: 1,              // Sıkıştırma sonrası max 1MB
+    compressionMaxSizeMB: 0.5,             // Sıkıştırma sonrası max 500KB (GAS limitleri için)
     compressionMaxWidthOrHeight: 1920,    // Sıkıştırma sonrası max 1920px
     maxRetries: 3,                        // Başarısız yüklemede tekrar deneme
     retryDelay: 2000,                     // Tekrar deneme arası bekleme (ms)
     galleryRefreshInterval: 30000,        // Galeriyi yenileme süresi (30sn)
-    uploadTimeout: 60000                  // Yükleme zaman aşımı (60sn)
+    uploadTimeout: 90000,                  // Yükleme zaman aşımı (90sn)
+    verifyDelay: 3000,                      // Upload sonrası doğrulama bekleme (3sn)
+    verifyAttempts: 5,                      // Doğrulama deneme sayısı
+    verifyInterval: 4000                    // Doğrulama denemeleri arası bekleme (4sn)
   };
 
   // ============================================
@@ -458,7 +461,17 @@
     DOM.btnUpload.disabled = false;
   }
 
-  /** Yükleme Fonksiyonu — Iframe POST (%100 Mobil Uyumluluk) */
+  /**
+   * Yükleme Fonksiyonu — Iframe + multipart/form-data
+   * 
+   * Google Apps Script'in exec URL'si 302 redirect döner.
+   * fetch(no-cors) bu redirect'te POST body'yi kaybeder → çalışmaz.
+   * Iframe form POST ise redirect'i body ile takip eder → güvenilir.
+   * 
+   * multipart/form-data kullanılır çünkü:
+   * - application/x-www-form-urlencoded base64'ü URL-encode eder → 3x şişme
+   * - multipart/form-data veriyi olduğu gibi gönderir → şişme yok
+   */
   function uploadWithXHR(file) {
     return new Promise(function (resolve, reject) {
       if (!URL_CONFIG.klasor) {
@@ -479,25 +492,52 @@
           comment: DOM.guestComment.value.trim()
         };
 
-        console.log('[Upload] Mobil Uyumlu Iframe Upload başlatıldı...');
+        var payloadStr = JSON.stringify(payload);
+        console.log('[Upload] Başlatıldı, payload boyutu:', formatFileSize(payloadStr.length));
 
-        // Progress bar
+        // Simüle progress bar
         var simulatedProgress = 0;
         var progressInterval = setInterval(function() {
-          simulatedProgress += 5;
+          simulatedProgress += 3;
           if (simulatedProgress > 85) simulatedProgress = 85;
-          updateProgress(simulatedProgress, 'Sunucuya gönderiliyor... (' + simulatedProgress + '%)');
-        }, 400);
+          updateProgress(simulatedProgress, 'Sunucuya gönderiliyor...');
+        }, 500);
 
-        var uploadTimeout = setTimeout(function() {
+        var isResolved = false;
+
+        // Tek timeout — asla çift tanımlama yok
+        var timeoutTimer = setTimeout(function() {
+          if (isResolved) return;
+          isResolved = true;
           clearInterval(progressInterval);
-          try {
-            document.body.removeChild(form);
-            document.body.removeChild(iframe);
-          } catch(err) {}
-          reject(new Error('Yükleme zaman aşımına uğradı. Dosya boyutu çok büyük olabilir veya internetiniz yavaş.'));
+          window.removeEventListener('message', messageHandler);
+          cleanupIframe();
+          reject(new Error('Yükleme zaman aşımına uğradı. İnternet bağlantınızı kontrol edin.'));
         }, CONFIG.uploadTimeout);
 
+        function finishSuccess() {
+          if (isResolved) return;
+          isResolved = true;
+          clearTimeout(timeoutTimer);
+          clearInterval(progressInterval);
+          window.removeEventListener('message', messageHandler);
+          updateProgress(100, 'Tamamlandı!');
+          console.log('[Upload] ✅ Başarılı!');
+          cleanupIframe();
+          setTimeout(function() { resolve({ success: true }); }, 300);
+        }
+
+        function finishError(msg) {
+          if (isResolved) return;
+          isResolved = true;
+          clearTimeout(timeoutTimer);
+          clearInterval(progressInterval);
+          window.removeEventListener('message', messageHandler);
+          cleanupIframe();
+          reject(new Error(msg));
+        }
+
+        // ---- Iframe + Form oluştur ----
         var iframeName = 'upload_iframe_' + Date.now();
         var iframe = document.createElement('iframe');
         iframe.name = iframeName;
@@ -508,56 +548,85 @@
         form.method = 'POST';
         form.action = API_BASE;
         form.target = iframeName;
-        // %100 Güvenli yöntem: multipart/form-data veri şifrelemez, limitlere takılmaz
-        form.enctype = 'multipart/form-data';
+        form.enctype = 'multipart/form-data';  // URL-encoding YOK → şişme yok
         form.style.display = 'none';
 
-        var input = document.createElement('input');
-        input.type = 'hidden';
+        // payload alanı — JSON string olarak
+        var input = document.createElement('textarea');
         input.name = 'payload';
-        input.value = JSON.stringify(payload);
+        input.value = payloadStr;
+        input.style.display = 'none';
         form.appendChild(input);
-        
+
         document.body.appendChild(form);
 
-        // İframe submit olduğunda Google Apps Script bize 
-        // window.parent.postMessage(...) çalıştıran bir HTML döndürecek.
+        // ---- postMessage dinleyici (GAS HtmlService'den gelen yanıt) ----
         var messageHandler = function(event) {
-          // Google veya iframe'den gelen mesajları filtrele
           if (event.data && typeof event.data.success !== 'undefined') {
-            clearTimeout(uploadTimeout);
-            clearInterval(progressInterval);
-            window.removeEventListener('message', messageHandler);
-            
             if (event.data.success) {
-              console.log('[Upload] ✅ Başarılı! File ID:', event.data.fileId);
-              updateProgress(100, 'Tamamlandı!');
-              setTimeout(function() { resolve({ success: true }); cleanup(); }, 300);
+              console.log('[Upload] ✅ Başarılı (postMessage)');
+              finishSuccess();
             } else {
-              console.error('[Upload] ❌ Sunucu Hatası:', event.data.error);
-              reject(new Error('Kritik Hata: ' + event.data.error));
-              cleanup();
+              console.error('[Upload] ❌ Sunucu hatası:', event.data.error);
+              finishError('Sunucu hatası: ' + (event.data.error || 'Bilinmeyen'));
             }
           }
         };
-        
         window.addEventListener('message', messageHandler);
 
-        // Fallback: Timeout ve Cleanup
-        var uploadTimeout = setTimeout(function() {
-          clearInterval(progressInterval);
-          window.removeEventListener('message', messageHandler);
-          cleanup();
-          reject(new Error('Yükleme zaman aşımına uğradı. Dosya boyutu çok büyük olabilir veya internetiniz yavaş.'));
-        }, CONFIG.uploadTimeout);
+        // ---- Iframe onload → galeri doğrulama (postMessage gelmezse fallback) ----
+        iframe.onload = function() {
+          if (isResolved) return;
+          console.log('[Upload] Iframe yanıt verdi, doğrulama başlıyor...');
+          updateProgress(75, 'Doğrulanıyor...');
+          
+          // postMessage'a 2sn şans ver, sonra galeri kontrolüne geç
+          setTimeout(function() {
+            if (isResolved) return;
+            startVerification(file.name);
+          }, 2000);
+        };
 
-        function cleanup() {
-          try {
-            document.body.removeChild(form);
-            document.body.removeChild(iframe);
-          } catch(err) {}
+        // ---- Galeri Doğrulama ----
+        function startVerification(filename) {
+          if (isResolved) return;
+          var attempts = 0;
+
+          function verify() {
+            if (isResolved) return;
+            attempts++;
+            updateProgress(80 + attempts * 3, 'Doğrulanıyor... (' + attempts + '/' + CONFIG.verifyAttempts + ')');
+            
+            verifyUploadFile(filename).then(function(found) {
+              if (isResolved) return;
+              if (found) {
+                finishSuccess();
+              } else if (attempts < CONFIG.verifyAttempts) {
+                console.log('[Upload] Galeri bekleniyor... (' + attempts + '/' + CONFIG.verifyAttempts + ')');
+                setTimeout(verify, CONFIG.verifyInterval);
+              } else {
+                finishError('Fotoğraf sunucuya gönderilemedi. Lütfen tekrar deneyin.');
+              }
+            }).catch(function() {
+              if (attempts < CONFIG.verifyAttempts) {
+                setTimeout(verify, CONFIG.verifyInterval);
+              } else {
+                finishError('Doğrulama başarısız. Lütfen tekrar deneyin.');
+              }
+            });
+          }
+
+          verify();
         }
 
+        // ---- Temizlik ----
+        function cleanupIframe() {
+          try { document.body.removeChild(form); } catch(err) {}
+          try { document.body.removeChild(iframe); } catch(err) {}
+        }
+
+        // ---- Formu gönder ----
+        console.log('[Upload] Form gönderiliyor (multipart/form-data)...');
         form.submit();
       };
       
@@ -566,6 +635,55 @@
       };
       
       reader.readAsDataURL(file);
+    });
+  }
+
+  /** Dosyanin dogrudan galeride var olup olmadigini net filename uzerinden arar (Güvenli Fallback) */
+  function verifyUploadFile(targetFilename) {
+    return new Promise(function(resolve) {
+      // JSONP ile galeri kontrolü (CORS bypass)
+      var callbackName = '__verifySpecific_' + Date.now();
+      window[callbackName] = function(result) {
+        delete window[callbackName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+
+        if (result.success && result.data && result.data.length > 0) {
+          // Gonderdigimiz ana ismin galerideki son dosyalarda gecip gecmedigini kontrol et
+          var found = result.data.some(function(item) {
+             return item.name.indexOf(targetFilename) !== -1 || targetFilename.indexOf(item.name) !== -1;
+          });
+          
+          if (found) {
+            resolve(true);
+          } else {
+             // Orijinal dosya ismi convert edildigi icin uzanti degismis olabilir (heic->jpg)
+             var nameWithoutExt = targetFilename.split('.').slice(0, -1).join('.');
+             var foundLoose = result.data.some(function(item) {
+               return item.name.indexOf(nameWithoutExt) !== -1;
+             });
+             resolve(foundLoose);
+          }
+        } else {
+          resolve(false);
+        }
+      };
+
+      var script = document.createElement('script');
+      script.src = API_BASE + '?action=getGallery&folderId=' + URL_CONFIG.klasor + '&callback=' + callbackName;
+      script.onerror = function() {
+        delete window[callbackName];
+        resolve(false);
+      };
+
+      setTimeout(function() {
+        if (window[callbackName]) {
+          delete window[callbackName];
+          if (script.parentNode) script.parentNode.removeChild(script);
+          resolve(false);
+        }
+      }, 8000);
+
+      document.head.appendChild(script);
     });
   }
 

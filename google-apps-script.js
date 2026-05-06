@@ -6,35 +6,64 @@
  * 
  * İşlev: GitHub Pages üzerinden gelen fotoğrafları (Base64)
  * Google Drive'da belirtilen klasöre kaydeder.
+ * 
+ * Desteklenen POST formatları:
+ * 1. fetch text/plain → e.postData.contents = raw JSON string
+ * 2. form URL-encoded → e.parameter.payload = JSON string
+ * 3. form URL-encoded → e.postData.contents = "payload=..." encoded
  */
 
 function doPost(e) {
   try {
     var payloadStr = null;
+    var contentType = (e.postData && e.postData.type) || '';
     
-    // Gelen veriyi güvenle çıkartma
-    if (e.parameter && e.parameter.payload) {
-      payloadStr = e.parameter.payload;
-    } else if (e.postData && e.postData.contents) {
+    // === Yöntem 1: Raw JSON body (fetch text/plain veya application/json) ===
+    if (e.postData && e.postData.contents) {
       var contents = e.postData.contents;
-      if (contents.indexOf('payload=') === 0) {
+      
+      // Raw JSON denemesi — text/plain veya application/json
+      if (contentType.indexOf('text/plain') !== -1 || contentType.indexOf('application/json') !== -1) {
+        payloadStr = contents;
+      }
+      // URL-encoded form denemesi
+      else if (contents.indexOf('payload=') === 0) {
         payloadStr = decodeURIComponent(contents.substring(8).replace(/\+/g, ' '));
-      } else if (contents.endsWith('=')) {
-        payloadStr = contents.slice(0, -1);
-      } else {
+      }
+      // Bilinmeyen format — doğrudan JSON parse dene
+      else {
         payloadStr = contents;
       }
     }
     
+    // === Yöntem 2: URL-encoded parameter (iframe form submit) ===
+    if (!payloadStr && e.parameter && e.parameter.payload) {
+      payloadStr = e.parameter.payload;
+    }
+    
+    // === Yöntem 3: Son çare — raw contents ===
+    if (!payloadStr && e.postData && e.postData.contents) {
+      payloadStr = e.postData.contents;
+    }
+    
     if (!payloadStr) {
-      throw new Error("Veri sunucuya ulasamadi (bos payload). Sunucu veri sinirina (1-2MB) takilmis olabilir.");
+      throw new Error("Veri sunucuya ulasamadi (bos payload). Content-Type: " + contentType);
+    }
+    
+    // Trailing '=' temizleme (bazı URL-encoded gönderilerde oluşabilir)
+    if (payloadStr.charAt(payloadStr.length - 1) === '=' && payloadStr.charAt(0) === '{') {
+      // Geçerli JSON'un sonunda '=' olmaz — kaldır
+    } else if (payloadStr.endsWith('=') && payloadStr.charAt(0) !== '{') {
+      payloadStr = payloadStr.slice(0, -1);
     }
     
     var data;
     try {
       data = JSON.parse(payloadStr);
     } catch(err) {
-      throw new Error("Veri formati cozulemedi. Icerik kesilmis olabilir: " + err.message);
+      // İçerik boyutunu logla (debug için)
+      var preview = payloadStr.substring(0, 200);
+      throw new Error("JSON parse hatasi. Boyut: " + payloadStr.length + " byte. Onizleme: " + preview + "... Hata: " + err.message);
     }
     
     var base64Data = data.file;
@@ -54,7 +83,7 @@ function doPost(e) {
     try {
       blob = Utilities.newBlob(Utilities.base64Decode(cleanBase64), mimeType, filename);
     } catch(err) {
-      throw new Error("Base64 cozulemedi okuma hatasi: " + err.message);
+      throw new Error("Base64 decode hatasi. Base64 boyut: " + cleanBase64.length + ". Hata: " + err.message);
     }
     
     var folder = DriveApp.getFolderById(folderId);
@@ -68,15 +97,14 @@ function doPost(e) {
     file.setDescription(description);
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
     
-    // Iframe içerisinden parent sayfaya postMessage ile sonucu yolla (CORS BYPASS)
+    // İki tür yanıt döndür: postMessage (iframe için) + JSON (fetch için)
     var resultObj = { success: true, fileId: file.getId(), url: file.getUrl() };
-    var html = "<script>window.parent.postMessage(" + JSON.stringify(resultObj) + ", '*');</script>";
+    var html = "<html><body><script>try { window.top.postMessage(" + JSON.stringify(resultObj) + ", '*'); } catch(e) { try { window.parent.postMessage(" + JSON.stringify(resultObj) + ", '*'); } catch(e2) {} }</script><p>OK</p></body></html>";
     return HtmlService.createHtmlOutput(html);
     
   } catch (error) {
-    // Hata durumunu postMessage ile yolla ki kullanici hatayi kelimesi kelimesine gorebilsin
     var errObj = { success: false, error: error.message };
-    var errHtml = "<script>window.parent.postMessage(" + JSON.stringify(errObj) + ", '*');</script>";
+    var errHtml = "<html><body><script>try { window.top.postMessage(" + JSON.stringify(errObj) + ", '*'); } catch(e) { try { window.parent.postMessage(" + JSON.stringify(errObj) + ", '*'); } catch(e2) {} }</script><p>ERROR: " + error.message + "</p></body></html>";
     return HtmlService.createHtmlOutput(errHtml);
   }
 }
