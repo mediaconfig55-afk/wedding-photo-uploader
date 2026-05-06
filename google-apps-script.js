@@ -97,15 +97,13 @@ function doPost(e) {
     file.setDescription(description);
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
     
-    // İki tür yanıt döndür: postMessage (iframe için) + JSON (fetch için)
+    // JSON yanıtı döndür (Artık Node.js backend kullandığımız için HTML wrapper'a gerek yok)
     var resultObj = { success: true, fileId: file.getId(), url: file.getUrl() };
-    var html = "<html><body><script>try { window.top.postMessage(" + JSON.stringify(resultObj) + ", '*'); } catch(e) { try { window.parent.postMessage(" + JSON.stringify(resultObj) + ", '*'); } catch(e2) {} }</script><p>OK</p></body></html>";
-    return HtmlService.createHtmlOutput(html);
+    return ContentService.createTextOutput(JSON.stringify(resultObj)).setMimeType(ContentService.MimeType.JSON);
     
   } catch (error) {
     var errObj = { success: false, error: error.message };
-    var errHtml = "<html><body><script>try { window.top.postMessage(" + JSON.stringify(errObj) + ", '*'); } catch(e) { try { window.parent.postMessage(" + JSON.stringify(errObj) + ", '*'); } catch(e2) {} }</script><p>ERROR: " + error.message + "</p></body></html>";
-    return HtmlService.createHtmlOutput(errHtml);
+    return ContentService.createTextOutput(JSON.stringify(errObj)).setMimeType(ContentService.MimeType.JSON);
   }
 }
 
