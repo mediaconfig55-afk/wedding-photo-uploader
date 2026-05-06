@@ -425,6 +425,45 @@
     reader.readAsDataURL(file);
   }
 
+  /** Fotoğraftan kalıcı küçük resim (thumbnail) base64 URL oluştur */
+  function createThumbnailDataUrl(file) {
+    return new Promise(function(resolve) {
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        var img = new Image();
+        img.onload = function() {
+          var canvas = document.createElement('canvas');
+          var maxSize = 200; // Küçük thumbnail boyutu (200px)
+          var width = img.width;
+          var height = img.height;
+          
+          if (width > height) {
+            height = Math.round(height * maxSize / width);
+            width = maxSize;
+          } else {
+            width = Math.round(width * maxSize / height);
+            height = maxSize;
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          var ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          resolve(canvas.toDataURL('image/jpeg', 0.6)); // Düşük kalite = küçük boyut
+        };
+        img.onerror = function() {
+          resolve(''); // Hata durumunda boş
+        };
+        img.src = e.target.result;
+      };
+      reader.onerror = function() {
+        resolve('');
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
   /** Önizleme yüklenirken göster */
   function showPreviewLoading() {
     DOM.previewContainer.style.display = 'block';
@@ -473,28 +512,32 @@
             var res = await uploadWithXHR(file, prefix);
             successCount++;
             
-            // Yerel Galeriye Ekle (Sadece kendisi görecek)
+            // Yerel Galeriye Ekle — Kalıcı Base64 Thumbnail ile
+            var thumbnailDataUrl = await createThumbnailDataUrl(file);
             var myPhotos = JSON.parse(localStorage.getItem('wedding-my-uploads') || '[]');
             
-            // Fotoğrafın yerel blob URL'sini oluştur (fileId gelmese de çalışır)
-            var localUrl = URL.createObjectURL(file);
             var driveId = res.response.fileId || '';
-            var thumbUrl = driveId 
-                ? 'https://drive.google.com/thumbnail?id=' + driveId + '&sz=w500' 
-                : localUrl;
-            var fullImgUrl = driveId 
-                ? 'https://drive.google.com/thumbnail?id=' + driveId + '&sz=w1920' 
-                : localUrl;
-            
             var newPhoto = {
                 id: driveId || ('local-' + Date.now() + '-' + i),
-                thumbnailUrl: thumbUrl,
-                fullUrl: fullImgUrl,
+                thumbnailUrl: thumbnailDataUrl,
+                fullUrl: thumbnailDataUrl,  // Tam boyut yerine de thumbnail kullanıyoruz (localStorage sınırlı)
                 guestName: DOM.guestName.value.trim() || 'Anonim Misafir',
                 createdTime: new Date().toISOString()
             };
             myPhotos.unshift(newPhoto);
-            localStorage.setItem('wedding-my-uploads', JSON.stringify(myPhotos));
+            
+            // localStorage taşmasını engelle (max 50 fotoğraf)
+            if (myPhotos.length > 50) myPhotos.length = 50;
+            
+            try {
+                localStorage.setItem('wedding-my-uploads', JSON.stringify(myPhotos));
+            } catch(storageErr) {
+                // localStorage doluysa en eski fotoğrafları sil
+                while (myPhotos.length > 5) {
+                    myPhotos.pop();
+                    try { localStorage.setItem('wedding-my-uploads', JSON.stringify(myPhotos)); break; } catch(e2) {}
+                }
+            }
 
         } catch (err) {
             console.error('Yükleme hatası:', err.message);
